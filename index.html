@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<!-- saved from url=(0046)http://investors.visiomind.com/brain/#+0.4+-10 -->
+<html><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+		<title>Brain</title>
+		
+		<meta name="viewport" content="width=device-width">
+		<style>
+html {
+	margin: 0px;
+	background: #0a4ecc;
+	width: 100%;
+	height: 100%;
+}
+body {isolation: isolate;/* background: #000; *//* min-height: 100%; */;}
+}
+a {
+	color:#0078ff;
+}
+canvas {
+	position: absolute;
+	width: 100%;
+	height:100%;
+	top: 0;
+	left: 0;
+	transition: opacity 2s;
+	-touch-action: none;
+}
+#brain {}
+#head {opacity: .3; mix-blend-mode: screen;}
+		</style>
+	</head>
+	<body>
+		<canvas id="brain" style="width: 1600px; height: 742px;" __spector_context_type="webgl" width="1600" height="742"></canvas>
+		<canvas id="head" style="width: 1600px; height: 742px; touch-action: none;" __spector_context_type="webgl" width="1600" height="742"></canvas>
+		<script src="three.min.js"></script>
+		<script>
+	var adaptive=true, adjustment=true, params=location.hash.replace('#', '').split('+'),
+		roV1=.0022, roV2=-.0005, ro1=0, ro2=0, lightI=80,
+		color='rgb(37,32,115)', hColor='#99c', fogC='#0A4ECC', emissive='rgb(1,6,35)',
+		colors=[[50, 100, 20, 0], [55, 45, 255, 0], [255, 45, 20, 0]];
+	var particles, particle, count = 0, dpr, lastW,
+	W=window.innerWidth, H=window.innerHeight, aspect=W / H;
+	var posZ = 1500; //distance to camera //1300
+
+	var mouseX = 0, mouseY = 0, x0, y0, canvas=document.querySelector('#brain'), canvas1=document.querySelector('#head');
+	var vec3=function(x,y,z){return new THREE.Vector3(x||0, y||0, z||0)}, lookAt=vec3(0,-40,0), PI=Math.PI; 
+	//document.write('<script src="'+(params[3]||'brain.js')+'"></'+'script>');
+</script><script src="brain.js"></script> <script>
+	renderer = new THREE.WebGLRenderer({alpha:true, antialias:true, canvas: canvas});//
+	renderer.setSize( W, H );
+	renderer1 = new THREE.WebGLRenderer({alpha:true, antialias:true, canvas: canvas1});//
+	renderer1.setSize( W, H );
+	//renderer.context.getExtension('OES_standard_derivatives');
+	var camera = new THREE.PerspectiveCamera( 16, aspect, 1, 10000 );
+	camera.position.z=posZ*.9
+	var scene = new THREE.Scene();
+	var Bindex=BrainJSON.data.index.array,
+		Bposition = BrainJSON.data.attributes.position.array;
+	var count3=Bindex.length, vCount=Bposition.length/3;
+	var centers = new Int8Array( count3 );
+	var bColors = new Uint8Array( count3*3 );
+	var brights = new Float32Array ( count3 );
+	var positions = new Float32Array ( count3*3 );
+	var normals = new Float32Array ( count3*3 );
+	var points=[], activePoints=[];
+
+	function addSiblings(a,b,one){
+		if (!points[a]) points[a]={siblings:[], distances:[], indexes:[], brightness:0};
+		if (points[a].siblings.indexOf(b)<0) {
+			points[a].siblings.push(b);
+			var a3=a*3, dx=Bposition[a3]-Bposition[b*=3], dy=Bposition[a3+1]-Bposition[b+1], dz=Bposition[a3+2]-Bposition[b+2];
+			points[a].distances.push(Math.sqrt(dx*dx+dy*dy+dz*dz));
+		}
+		if (!one) addSiblings(b,a,1)
+	}
+	Bindex.forEach(function(ind, i){
+		addSiblings(ind, Bindex[i+(i%3?-1:2)]);
+		points[ind].indexes.push(i);
+		centers[i]= i % 3
+		brights[i]=0;
+		positions[i*=3]=Bposition[ind*=3]//*6;
+		positions[i+1]=Bposition[ind+1]//*6;
+		positions[i+2]=Bposition[ind+2]//*6;
+		// normals[i]=Bnormal[ind];
+		// normals[i+1]=Bnormal[ind+1];
+		// normals[i+2]=Bnormal[ind+2];
+	});
+	var ttl=10;
+	(function setActive(n){
+		if (!n) return
+		var i=parseInt(Math.random()*vCount)
+		//if (geometry.vertices[i].z<-100) setActive()
+		points[i].isActive=ttl, activePoints.push(points[i]);
+		(points[i].color=colors[n%3])[3]++;
+		setActive(n-1) 
+	})(60);
+	
+	var bGeometry=new THREE.BufferGeometry;
+	bGeometry.addAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+	//bGeometry.addAttribute( 'normal', new THREE.BufferAttribute( normals, 3 ) );
+	bGeometry.addAttribute( 'bColor', new THREE.BufferAttribute( bColors, 3 ) );
+	bGeometry.addAttribute( 'center', new THREE.BufferAttribute( centers, 1 ) );
+	bGeometry.addAttribute( 'bright', new THREE.BufferAttribute( brights, 1 ) );
+	bGeometry.computeBoundingSphere();
+	bGeometry.computeVertexNormals();
+	R=bGeometry.boundingSphere.radius*.85;
+	var Wmaterial = new THREE.MeshStandardMaterial({
+		onBeforeCompile: function(sh){
+			sh.vertexShader='\
+#define MYSHADER\n\
+attribute float center, bright;\n\
+attribute vec3 bColor;\n\
+varying vec3 vCenter, vBcolor, vPos, vV0, vV1, vV2;\n\
+varying float vBright;\n\
+'			+sh.vertexShader.replace(/}\s*$/, '\
+	vBright=bright;\n\
+	int c=int(center);\n\
+	vCenter = vec3(c==0, c==1, c==2);\n\
+	vPos=position;\n\
+	vV0=vCenter[0]*vPos;\n\
+	vV1=vCenter[1]*vPos;\n\
+	vV2=vCenter[2]*vPos;\n\
+	vBcolor=bColor/32.0;\n\
+}\			');
+			sh.fragmentShader='\
+#define MYSHADER\n\
+varying vec3 vCenter, vBcolor, vPos, vV0, vV1, vV2;\n\
+varying float vBright;\n\
+'			+sh.fragmentShader.replace('#include <alphamap_fragment>', '\
+	#include <alphamap_fragment>\n\
+	vec3 d = fwidth( vCenter );\n\
+	vec3 a3 = smoothstep( vec3(0.0), d * 1.4, vCenter+0.4*d-1.0/vViewPosition.z );\n\
+	float scale = dot(normalize(vViewPosition), vNormal);\n\
+	scale = 1.0-scale*scale;\n\
+	float dist = distance(vPos, vV0.xyz/vCenter.x);\n\
+	dist = min(dist, distance(vPos, vV1.xyz/vCenter.y));\n\
+	dist = min(dist, distance(vPos, vV2.xyz/vCenter.z));\n\
+	float b3 = smoothstep(1.0, 1.5, dist );\n\
+	float edgeFactorTri=min(b3,min( min( a3.x, a3.y ), a3.z ));\n\
+	diffuseColor.a *= mix( 1.0,  0.0, edgeFactorTri );\n\
+	float dissipation='+(posZ+.0*R+.01)+';\n\
+	diffuseColor.a *= smoothstep( 60.0,  -85.0, vViewPosition.z-dissipation );\n\
+\			').replace('	#include <fog_fragment>', '\
+	float lVc=length(vCenter);\n\
+	gl_FragColor.rgb = mix( gl_FragColor.rgb, vBcolor, (.12*lVc+pow(lVc,6.0))*vBright );\n\
+	#include <fog_fragment>\
+\			');
+			//console.log(sh, sh.vertexShader, sh.fragmentShader);
+		},
+		roughness: .76,
+		metalness: .983,
+		side: 2,
+		transparent: true, alphaTest: 0.05
+	});//, opacity: 0
+
+	var Hmaterial = Wmaterial.clone();
+	Hmaterial.color.set(hColor);
+	Hmaterial.side=1;
+
+	Wmaterial.fog=false;
+	Wmaterial.color.set(color);
+	Wmaterial.emissive.set(emissive);
+	Wmaterial.extensions={derivatives: 1};
+
+	var Hgeometry = THREE.JSONLoader.prototype.parse(HeadJSON).geometry;
+	Hgeometry.computeVertexNormals();
+	var Head = new THREE.Mesh(Hgeometry, Hmaterial);
+	//Head.scale.multiplyScalar(.072);
+	var Brain=new THREE.Mesh(bGeometry, Wmaterial);
+	//Brain.scale.y=1.1;
+	//Brain.position.set(0,95,-1);
+	Brain.position.x=5;
+	var particles = new THREE.Group();
+	particles.add(Brain, Head);//new THREE.Points(geometry, Pmaterial), , Earth
+	particles.scale.multiplyScalar(.26);
+	scene.add(particles);
+	// POSITIONS :
+	params[2]=particles.position.y=-10;
+	particles.rotation.set(.06, 0, 0, "ZYX");
+	var roX=params[1]=scene.rotation.x=.4;
+
+	scene.fog=new THREE.Fog(fogC, posZ-R/2, posZ+R);
+	hLight=new THREE.HemisphereLight('#fff', '#333', lightI);
+	dLight=new THREE.DirectionalLight('#fff', .4);
+	dLight.position.set(0.2, 0, 1)
+	scene.add(hLight, dLight);
+	hLight.position.set(0,0,1)
+
+	if (adjustment) {
+		var q1 = new THREE.Quaternion(), q2 = new THREE.Quaternion(), active, e_type;
+		window.getWpos=function(){
+			return [scene.position, scene.rotation, camera]
+		}
+		canvas1.ontouchstart=canvas1.onpointerdown=canvas1.onmousedown=function(e){
+			if (active) return;
+			e_type=e.type.replace(/down|start/, '')
+			e=e.changedTouches?e.changedTouches[0]:e;
+			active=2;
+			x0=e.clientX;
+			y0=e.clientY;
+			//console.log(e.type)
+		}
+		onpointermove=onmousemove=ontouchmove=function(e){
+			if (!active || e.type.indexOf(e_type)<0) return
+			//console.log(e.type)
+			var e0=e.changedTouches?e.changedTouches[0]:e;
+			var dX=x0-(x0=e0.clientX), dY=y0-(y0=e0.clientY);
+			canvas1.style.touchAction=(Math.abs(dX)>Math.abs(dY))?'none':''//e.preventDefault();
+			if (e.shiftKey) {
+				particles.rotation.x=params[0]=(params[0]-dY*.001).toFixed(3)*1;
+			}else if (e.ctrlKey) {
+				roX=params[1]=(params[1]-dY*.001).toFixed(3)*1;
+			}else if (e.altKey) {
+				particles.position.y=params[2]=(params[2]+dY*.1).toFixed(1)*1;
+			} else {
+				scene.rotation.x-=dY*.001;
+				active=1
+			}
+			ro1-=dX*.003;
+		}
+		onmouseup=onpointerup=ontouchup=ontouchcancel=onpointercancel=onkeyup=function(e){
+			if (active==2) location.hash=params.join('+');
+			active='';
+		}
+	}
+	(onhashchange=function() {
+		if (active==2) return;
+		var _params=location.hash.replace('#', '').split('+')
+		if (_params[0]) params[0]=particles.rotation.x=_params[0]*=1;
+		if (_params[1]) params[1]=roX=_params[1]*=1;
+		if (_params[2]) params[2]=particles.position.y=_params[2]*=1;
+		if (_params[4]) params[4]=roV1=+_params[4];
+		if (_params[5]) params[5]=ro1=_params[5]/180*Math.PI
+	})();
+
+	var t0=new Date()*1, dMax=1000/15, dMin=1000/45, dT=1000/61, af, Pactive=[],
+		pUp=0, pDn=[], flTimer=[], vecTest=new THREE.Vector3(), transStart, pLast, transactions=[];
+	requestAnimationFrame(function animate() {
+		requestAnimationFrame( animate );
+		var t=new Date()*1, dt=t-t0;
+		if (dt<dMin) return; // !Eh || 
+		dt=Math.min(dt, dMax);
+		t0=t;
+		var pos=canvas.getBoundingClientRect(), dY=window.innerHeight-document.documentElement.getBoundingClientRect().bottom;
+		if (pos.bottom<=0 || pos.top>=window.innerHeight) return;
+		if (dpr!=(dpr=window.devicePixelRatio) || W!=(W=window.innerWidth) || H!=(H=window.innerHeight)) {
+			renderer.setSize(W, H)
+			renderer.setPixelRatio( dpr );
+			renderer1.setSize(W, H)
+			renderer1.setPixelRatio( dpr );
+			camera.aspect=W/H;
+			camera.updateProjectionMatrix();
+		}
+		var addPoints=[];
+		activePoints.forEach(function(point, i){
+			var b=point.brightness;
+			if (point.isActive>0 && (b+=(point.speed||.3)*(b+.05)) >.75) {//
+				point.siblings.forEach(function(s, j){
+					s=points[s];
+					if ( activePoints.indexOf(s)>-1 ) return //console.log(11);
+					s.speed=.7/Math.sqrt(point.distances[j]);
+					//s.from=point;
+					if (s.isActive=(point.color[3]<activePoints.length/3.2 || Math.random()>.8)*1) {
+						activePoints.push(s),
+						(s.color=point.color)[3]++;
+					};
+				})
+				if (b>1) point.isActive=-1;
+			} else if (point.isActive<1) {
+				if ( (b*=.93) < 0.0025) {
+					b=point.isActive=0;//point.from=
+					activePoints.splice(i,1);
+					point.color[3]--
+				}
+			}
+			point.brightness=b;
+			point.indexes.forEach(function(i){
+				brights[i]=b;
+				bColors[i*=3]=point.color[0];
+				bColors[i+1]=point.color[1];
+				bColors[i+2]=point.color[2];
+			});
+		});
+		//activePoints=activePoints.concat(addPoints);
+		bGeometry.attributes.bright.needsUpdate=true;
+		bGeometry.attributes.bColor.needsUpdate=true;
+		camera.position.z += (posZ - camera.position.z ) * .25;
+		scene.rotation.x+=(roX-scene.rotation.x)*.1;
+		camera.lookAt(lookAt);
+		ro1+=roV1; ro2+=roV2;
+		//particles.rotation.set(0,0,0);
+		particles.rotation.y=ro1//.rotateX(obliquity).rotateY(ro1);
+		//particles.rotation.y-=.0009
+		// Earth.visible=!1;
+		// cubeCamera.update( renderer, scene );
+		// Earth.visible=!0;
+		Brain.visible=true;
+		Head.visible=false;
+		renderer.render( scene, camera );
+		Brain.visible=false;
+		Head.visible=true;
+		renderer1.render( scene, camera );
+		//count += 0.08;
+	})
+	canvas.style.opacity=canvas1.style.opacity='';
+//})()
+</script>
+	</body></html>
